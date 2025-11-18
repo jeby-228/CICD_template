@@ -20,6 +20,9 @@ public class PortalApiModule : AbpModule
     {
         var configuration = context.Services.GetConfiguration();
         
+        // Configure Controllers
+        context.Services.AddControllers();
+        
         // Configure EF Core with PostgreSQL
         Configure<AbpDbContextOptions>(options =>
         {
