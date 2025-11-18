@@ -2,19 +2,22 @@ using Microsoft.EntityFrameworkCore;
 using PortalApi.EntityFrameworkCore;
 using Volo.Abp;
 using Volo.Abp.AspNetCore.Mvc;
+using Volo.Abp.AspNetCore.Serilog;
 using Volo.Abp.Autofac;
 using Volo.Abp.EntityFrameworkCore;
-using Volo.Abp.EntityFrameworkCore.PostgreSql;
 using Volo.Abp.Modularity;
 
 namespace PortalApi;
 
 [DependsOn(
-    typeof(AbpAspNetCoreMvcModule),
     typeof(AbpAutofacModule),
-    typeof(AbpEntityFrameworkCorePostgreSqlModule)
+    typeof(AbpAspNetCoreMvcModule),
+    typeof(AbpAspNetCoreSerilogModule),
+    typeof(PortalApiApplicationModule),
+    typeof(PortalApiHttpApiModule),
+    typeof(PortalApiEntityFrameworkCoreModule)
 )]
-public class PortalApiModule : AbpModule
+public class PortalApiHttpApiHostModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
@@ -23,22 +26,13 @@ public class PortalApiModule : AbpModule
         // Configure Controllers
         context.Services.AddControllers();
         
-        // Configure EF Core with PostgreSQL
+        // Configure ABP DB Context Options
         Configure<AbpDbContextOptions>(options =>
         {
-            options.UseNpgsql();
-        });
-        
-        // Register DbContext
-        context.Services.AddAbpDbContext<PortalApiDbContext>(options =>
-        {
-            options.AddDefaultRepositories(includeAllEntities: true);
-        });
-        
-        // Configure Database Connection String
-        context.Services.AddDbContext<PortalApiDbContext>(options =>
-        {
-            options.UseNpgsql(configuration.GetConnectionString("Default"));
+            options.Configure<PortalApiDbContext>(opts =>
+            {
+                opts.DbContextOptions.UseNpgsql(configuration.GetConnectionString("Default"));
+            });
         });
     }
 
@@ -52,6 +46,7 @@ public class PortalApiModule : AbpModule
             app.UseDeveloperExceptionPage();
         }
 
+        app.UseAbpRequestLocalization();
         app.UseRouting();
         app.UseConfiguredEndpoints();
     }

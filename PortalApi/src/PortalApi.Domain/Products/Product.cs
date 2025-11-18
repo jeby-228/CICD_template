@@ -1,12 +1,12 @@
 using System;
 using Volo.Abp.Domain.Entities;
 
-namespace PortalApi.Entities;
+namespace PortalApi.Products;
 
 /// <summary>
-/// Sample Product entity to demonstrate ABP Framework with PostgreSQL
+/// Product entity in the domain layer
 /// </summary>
-public class Product : Entity<Guid>
+public class Product : AggregateRoot<Guid>
 {
     public string Name { get; set; } = string.Empty;
     
