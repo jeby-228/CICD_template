@@ -77,6 +77,133 @@ jobs:
           output-file: 'license-report.json'
           include-project-dependencies: true
 
+  # === 安全性掃描（CodeQL）===
+  security-scan:
+    name: '安全性掃描'
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v4
+
+      # 設定 .NET 環境（C# 需要）
+      - name: 設定 .NET
+        if: matrix.language == 'csharp'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # 設定 Node.js 環境（前端需要）
+      - name: 設定 Node.js
+        if: matrix.language == 'javascript-typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # 初始化 CodeQL
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-and-quality
+
+      # 檢查是否有 C# 專案檔案
+      - name: 檢查 C# 專案
+        if: matrix.language == 'csharp'
+        id: check-csharp
+        run: |
+          if find . -name "*.csproj" -o -name "*.sln" | head -1 | grep -q .; then
+            echo "has-csharp-files=true" >> $GITHUB_OUTPUT
+            echo "找到 C# 專案檔案"
+          else
+            echo "has-csharp-files=false" >> $GITHUB_OUTPUT
+            echo "未找到 C# 專案檔案，跳過 C# 掃描"
+          fi
+
+      # 手動建構步驟（僅當有 C# 檔案時）
+      - name: 執行手動建構
+        if: matrix.build-mode == 'manual' && steps.check-csharp.outputs.has-csharp-files == 'true'
+        run: |
+          echo "執行 ABP 專案建構"
+          dotnet restore
+          dotnet build --no-restore
+
+      # 執行 CodeQL 分析
+      - name: 執行 CodeQL 分析
+        if: |
+          (matrix.language == 'csharp' && steps.check-csharp.outputs.has-csharp-files == 'true') ||
+          (matrix.language == 'javascript-typescript')
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:${{matrix.language}}'
+          output: sarif-results
+          upload: false
+
+      # 上傳 SARIF 到 GitHub Security
+      - name: 上傳 SARIF 到 GitHub Security
+        if: |
+          (matrix.language == 'csharp' && steps.check-csharp.outputs.has-csharp-files == 'true') ||
+          (matrix.language == 'javascript-typescript')
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results/${{matrix.language}}.sarif
+        continue-on-error: true
+
+      # 生成漏洞報告摘要
+      - name: 生成漏洞報告摘要
+        if: |
+          (matrix.language == 'csharp' && steps.check-csharp.outputs.has-csharp-files == 'true') ||
+          (matrix.language == 'javascript-typescript')
+        run: |
+          echo "## 🔍 CodeQL ${{ matrix.language }} 掃描結果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "sarif-results/${{matrix.language}}.sarif" ]; then
+            CRITICAL=$(jq '[.runs[].results[] | select(.level=="error")] | length' sarif-results/${{matrix.language}}.sarif)
+            HIGH=$(jq '[.runs[].results[] | select(.level=="warning")] | length' sarif-results/${{matrix.language}}.sarif)
+            MEDIUM=$(jq '[.runs[].results[] | select(.level=="note")] | length' sarif-results/${{matrix.language}}.sarif)
+            TOTAL=$(jq '[.runs[].results[]] | length' sarif-results/${{matrix.language}}.sarif)
+            
+            echo "| 嚴重程度 | 數量 |" >> $GITHUB_STEP_SUMMARY
+            echo "|---------|------|" >> $GITHUB_STEP_SUMMARY
+            echo "| 🔴 Critical/Error | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟠 High/Warning | $HIGH |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟡 Medium/Note | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+            echo "| **總計** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
+            
+            # 儲存結果供後續使用
+            echo "CODEQL_${matrix.language//-/_}_TOTAL=$TOTAL" >> $GITHUB_ENV
+            echo "CODEQL_${matrix.language//-/_}_CRITICAL=$CRITICAL" >> $GITHUB_ENV
+          fi
+        continue-on-error: true
+
+      # 上傳 SARIF 報告
+      - name: 上傳漏洞報告 Artifact
+        if: |
+          (matrix.language == 'csharp' && steps.check-csharp.outputs.has-csharp-files == 'true') ||
+          (matrix.language == 'javascript-typescript')
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-${{matrix.language}}-report
+          path: sarif-results/
+          retention-days: 90
+        continue-on-error: true
+
 
   # === PR 狀態和評論 ===
   pr-feedback:
@@ -88,7 +215,7 @@ jobs:
       actions: read # 讀取 Actions
 
     runs-on: windows-latest
-    needs: code-quality
+    needs: [code-quality, security-scan]
     if: always() && github.event.pull_request.draft == false
 
     steps:
@@ -97,10 +224,11 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Download test results
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v4
         with:
-          name: test-results
-          path: test-results
+          pattern: codeql-*-report
+          path: security-reports
+          merge-multiple: true
         continue-on-error: true
 
       - name: Generate PR comment
@@ -109,7 +237,10 @@ jobs:
           script: |
 
             const codeQualityResult = process.env.CODE_QUALITY_RESULT ?? '${{ needs.code-quality.result }}';
+            const securityScanResult = process.env.SECURITY_SCAN_RESULT ?? '${{ needs.security-scan.result }}';
+            
             let cqStatus = codeQualityResult;
+            let secStatus = securityScanResult;
 
             // 建立狀態報告
             let comment = `## 🔍 PR 自動檢查報告\n\n`;
@@ -120,18 +251,33 @@ jobs:
             comment += `### 📊 檢查結果\n\n`;
             comment += `| 檢查項目 | 狀態 |\n`;
             comment += `|---------|-----|\n`;
-            comment += `| 🏗️ 程式碼品質 | ${cqStatus === 'success' ? '✅ 通過' : '❌ 失敗'} |\n`;
+            comment += `| 🏗️ 程式碼品質 | ${cqStatus === 'success' ? '✅ 通過' : cqStatus === 'skipped' ? '⏭️ 跳過' : '❌ 失敗'} |\n`;
+            comment += `| 🔒 安全性掃描 | ${secStatus === 'success' ? '✅ 通過' : secStatus === 'skipped' ? '⏭️ 跳過' : '❌ 失敗'} |\n`;
 
-            // 可擴充如有 unitTestResult/securityResult 需要
+            // 安全掃描詳情
+            comment += `\n### 🔒 安全性掃描詳情\n\n`;
+            comment += `本次 PR 已通過 CodeQL 安全掃描，檢查 C# 和 JavaScript/TypeScript 程式碼的安全漏洞。\n\n`;
+            comment += `查看詳細安全報告：\n`;
+            comment += `- 前往 [Security > Code scanning](../security/code-scanning) 查看完整漏洞列表\n`;
+            comment += `- 下載 SARIF 報告從 [Actions artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n`;
 
-            if (cqStatus !== 'success') {
+            if (cqStatus !== 'success' || secStatus !== 'success') {
               comment += `\n### ⚠️ 需要注意的問題\n\n`;
-              comment += `- 程式碼品質檢查失敗，請檢查建置錯誤或格式問題\n`;
+              if (cqStatus !== 'success') {
+                comment += `- ❌ 程式碼品質檢查失敗，請檢查建置錯誤或格式問題\n`;
+              }
+              if (secStatus !== 'success') {
+                comment += `- ❌ 安全性掃描發現問題，請檢查 Security 頁面的詳細資訊\n`;
+              }
               comment += `\n請修正上述問題後重新推送程式碼。\n`;
             } else {
               comment += `\n### ✅ 所有檢查通過\n\n`;
               comment += `恭喜！您的 PR 已通過所有自動檢查，可以進行程式碼審查。\n`;
             }
+
+            comment += `\n---\n`;
+            comment += `💡 **提示**: 此報告由 GitHub Actions 自動生成。如需查看更多詳情，請點擊上方的 [Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) 連結。\n`;
+
             // 發布留言到 PR
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -155,5 +301,6 @@ jobs:
             **PR 標題**: ${{ github.event.pull_request.title }}
             **分支**: ${{ github.head_ref }} → ${{ github.base_ref }}
             **程式碼品質**: ${{ needs.code-quality.result == 'success' && '✅ 通過' || '❌ 失敗' }}
+            **安全性掃描**: ${{ needs.security-scan.result == 'success' && '✅ 通過' || '❌ 失敗' }}
             **PR 連結**: ${{ github.event.pull_request.html_url }}
         continue-on-error: true

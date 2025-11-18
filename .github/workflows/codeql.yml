@@ -57,3 +57,57 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: '/language:javascript-typescript'
+          output: sarif-results
+          upload: false
+
+      # 上傳 SARIF 檔案到 GitHub Security
+      - name: 上傳 SARIF 到 GitHub Security
+        if: steps.check-js.outputs.has-js-files == 'true'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results/javascript-typescript.sarif
+        continue-on-error: true
+
+      # 生成漏洞報告摘要
+      - name: 生成漏洞報告摘要
+        if: steps.check-js.outputs.has-js-files == 'true'
+        run: |
+          echo "## 🔍 CodeQL JavaScript/TypeScript 安全掃描結果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "sarif-results/javascript-typescript.sarif" ]; then
+            # 解析 SARIF 檔案並計算漏洞數量
+            CRITICAL=$(jq '[.runs[].results[] | select(.level=="error")] | length' sarif-results/javascript-typescript.sarif)
+            HIGH=$(jq '[.runs[].results[] | select(.level=="warning")] | length' sarif-results/javascript-typescript.sarif)
+            MEDIUM=$(jq '[.runs[].results[] | select(.level=="note")] | length' sarif-results/javascript-typescript.sarif)
+            TOTAL=$(jq '[.runs[].results[]] | length' sarif-results/javascript-typescript.sarif)
+            
+            echo "### 📊 漏洞統計" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| 嚴重程度 | 數量 |" >> $GITHUB_STEP_SUMMARY
+            echo "|---------|------|" >> $GITHUB_STEP_SUMMARY
+            echo "| 🔴 Critical/Error | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟠 High/Warning | $HIGH |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟡 Medium/Note | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+            echo "| **總計** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "✅ **未發現安全漏洞**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ **發現 $TOTAL 個潛在問題，請查看詳細報告**" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ 未找到 SARIF 報告檔案" >> $GITHUB_STEP_SUMMARY
+          fi
+        continue-on-error: true
+
+      # 上傳 SARIF 報告為 artifact
+      - name: 上傳漏洞報告 Artifact
+        if: steps.check-js.outputs.has-js-files == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-js-vulnerability-report
+          path: sarif-results/
+          retention-days: 90
+        continue-on-error: true
