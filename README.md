@@ -234,9 +234,48 @@ POSTGRES_PASSWORD=your_password ./docker-start.sh prod
 
 本專案包含以下 GitHub Actions 工作流程：
 
+### 🔒 安全掃描
+
 - **CodeQL 安全掃描**: 自動化安全漏洞掃描（支援 C# 和 JavaScript/TypeScript）
-- **Pull Request 檢查**: 程式碼品質檢查和自動化審查
+  - 自動生成漏洞分析報告（SARIF 格式）
+  - 在 GitHub Actions Summary 中顯示漏洞統計
+  - 上傳報告為 Artifacts，保留 90 天供下載分析
+  - 自動整合到 GitHub Security 頁面
+  - 定期掃描（每週一凌晨 2 點）
+
+### 🔍 Pull Request 檢查
+
+- **程式碼品質檢查**: 
+  - 建置驗證
+  - NuGet 套件授權檢查
+- **安全性掃描**:
+  - 對每個 PR 執行完整的 CodeQL 掃描
+  - 在 PR 評論中顯示掃描結果摘要
+  - 提供詳細的安全報告連結
+- **自動化回饋**:
+  - 自動在 PR 中發布檢查結果評論
+  - 整合 Teams 通知（如有設定）
+
+### 🔄 依賴管理
+
 - **Dependabot**: 自動依賴更新
+
+### 📊 查看安全報告
+
+1. **在 GitHub Actions 中查看**:
+   - 進入任何 CodeQL workflow run
+   - 查看 "Summary" 標籤頁的漏洞統計
+   - 從 "Artifacts" 下載完整的 SARIF 報告
+
+2. **在 Security 頁面查看**:
+   - 前往專案的 "Security" > "Code scanning alerts"
+   - 查看所有已發現的漏洞
+   - 點擊個別警報查看詳細資訊和修復建議
+
+3. **在 Pull Request 中查看**:
+   - 每個 PR 都會自動執行安全掃描
+   - 查看 PR 評論中的掃描結果摘要
+   - 點擊連結查看詳細報告
 
 ## 授權
 
