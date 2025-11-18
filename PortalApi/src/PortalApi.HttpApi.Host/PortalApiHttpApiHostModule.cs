@@ -41,6 +41,8 @@ public class PortalApiHttpApiHostModule : AbpModule
                     Email = "support@example.com"
                 }
             });
+            options.DocInclusionPredicate((docName, description) => true);
+            options.CustomSchemaIds(type => type.FullName);
         });
         
         // Configure ABP DB Context Options
